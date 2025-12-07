@@ -1,4 +1,4 @@
-# Shopping List HW4
+# Shopping List API (HW4)
 
 Node.js/Express REST API with uuCmd-style endpoints for shopping lists and items. HW4 upgrades the HW3 in-memory version to MongoDB with richer validation, authorization, and uuAppErrorMap handling.
 
@@ -58,14 +58,4 @@ Insomnia collection is provided in `insomnia_collection.json` (import into Insom
 - `POST` or `PATCH /item/update` — `{ itemId, name?, quantity?, note? }` (owner|member)
 - `POST` or `PATCH /item/markDone` — `{ itemId, done }` (owner|member; respects `canMarkItemsDoneByAll`)
 - `POST` or `DELETE /item/delete` — `{ itemId }` (owner|member)
-
-## Scenario descriptions
-1) Create list → Add member → List members → Member adds items → Member marks done (if allowed).  
-   - `/shoppingList/create` (owner) → `/shoppingList/addMember` (owner) → `/shoppingList/listMembers` → `/item/create` (member) → `/item/markDone`.
-2) Owner-only maintenance flow.  
-   - `/shoppingList/update` to change name/description/state → `/shoppingList/delete` to remove; owner permissions enforced.
-3) Browsing and paging your lists and items.  
-   - `/shoppingList/listMine` with `pageInfo` → pick `shoppingListId` → `/item/list` with `pageInfo` and optional `done` filter.
-4) Membership cleanup.  
-   - `/shoppingList/removeMember` removes a member; any subsequent item/list calls by that user will return 403.
 
