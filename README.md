@@ -68,19 +68,3 @@ Insomnia collection is provided in `insomnia_collection.json` (import into Insom
    - `/shoppingList/listMine` with `pageInfo` → pick `shoppingListId` → `/item/list` with `pageInfo` and optional `done` filter.
 4) Membership cleanup.  
    - `/shoppingList/removeMember` removes a member; any subsequent item/list calls by that user will return 403.
-
-## Command flow template (applies to every uuCmd here)
-1) Validation of dtoIn.  
-   1.1 Validate dtoIn against its schema (Zod) and build validationResult.  
-   1.2 Add `unsupportedKeys` warning if keys beyond schema are present.  
-   1.3 Reject with `invalidDtoIn` error if types/values are invalid or required keys are missing.  
-   1.4 Apply defaults declared in schema (e.g., `pageInfo.pageIndex`, `canMarkItemsDoneByAll`, `quantity`, `note`).
-2) Business logic.  
-   - Authorization via membership (owner/member) as required by the uuCmd.  
-   - MongoDB read/write using DAO in `src/data/store.js`.  
-   - Domain errors populate `uuAppErrorMap` (e.g., notFound, notAuthorized, notDeleted).
-3) Return dtoOut with data and `uuAppErrorMap`.
-
-### Error list (shared)
-- Warning `unsupportedKeys`: DtoIn contains unsupported keys. Parametry: `{ "unsupportedKeyList": [...] }`
-- Error `invalidDtoIn`: DtoIn is not valid. Parametry: `{ "invalidTypeKeyMap": {}, "invalidValueKeyMap": {}, "missingKeyMap": {} }`
