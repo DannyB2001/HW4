@@ -1,4 +1,4 @@
-# Shopping List API (HW4)
+# Shopping List HW4
 
 Node.js/Express REST API with uuCmd-style endpoints for shopping lists and items. HW4 upgrades the HW3 in-memory version to MongoDB with richer validation and error handling.
 
