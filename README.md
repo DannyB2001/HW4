@@ -1,13 +1,13 @@
 # Shopping List API (HW4)
 
-Node.js/Express REST API with uuCmd-style endpoints for shopping lists and items. HW4 upgrades the HW3 in-memory version to MongoDB with richer validation and error handling.
+Node.js/Express REST API with uuCmd-style endpoints for shopping lists and items. HW4 upgrades the HW3 in-memory version to MongoDB with richer validation, authorization, and uuAppErrorMap handling.
 
 ## What changed from HW3 to HW4
 - MongoDB persistence via the official driver (`MONGO_URI`).
-- New DB helper (`src/data/store.js`) replacing in-memory arrays; exposes DAOs for shoppingList, item, membership.
+- New DB helper (`src/data/store.js`) replacing in-memory arrays; DAOs for shoppingList, item, membership.
 - Generic dtoIn validation middleware with unsupported-key warnings and `invalidDtoIn` errors; applies defaults.
 - Every response returns `uuAppErrorMap`; domain errors/warnings are recorded there.
-- Auth now uses header `x-user-id` and membership-based authorization (owner/member) per shopping list.
+- Auth uses header `x-user-id` and membership-based authorization (owner/member) per shopping list.
 - Routes refactored to async/await with MongoDB; uuCmd names and dtoIn/dtoOut shapes stay compatible with HW3.
 
 ## How to run
@@ -68,3 +68,4 @@ Insomnia collection is provided in `insomnia_collection.json` (import into Insom
    - `/shoppingList/listMine` with `pageInfo` → pick `shoppingListId` → `/item/list` with `pageInfo` and optional `done` filter.
 4) Membership cleanup.  
    - `/shoppingList/removeMember` removes a member; any subsequent item/list calls by that user will return 403.
+
