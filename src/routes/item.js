@@ -1,8 +1,6 @@
-// src/routes/item.js
 const express = require("express");
-const { z } = require("zod");
 const auth = require("../middleware/auth");
-const validate = require("../middleware/validate");
+const { validateDtoIn, z } = require("../middleware/validate");
 const {
   getShoppingList,
   findMembership,
@@ -16,60 +14,69 @@ const {
 const router = express.Router();
 
 const pageInfoSchema = z.object({
-  pageIndex: z.number().int().nonnegative().default(0),
-  pageSize: z.number().int().positive().default(50)
+  pageIndex: z.coerce.number().int().nonnegative().default(0),
+  pageSize: z.coerce.number().int().positive().default(50)
 });
 
-function ensureItemExists(res, itemId) {
-  const item = getItem(itemId);
+const addError = (uuAppErrorMap, code, message, type = "error", paramMap = {}) => {
+  uuAppErrorMap[code] = { type, message, paramMap };
+};
+
+const normalizeDtoFromQuery = (req, res, next) => {
+  if (req.method === "GET" || req.method === "DELETE") {
+    req.body = { ...req.query };
+  }
+  next();
+};
+
+const ensureItemExists = async (itemId, res, uuAppErrorMap, codePrefix) => {
+  const item = await getItem(itemId);
   if (!item) {
-    res.status(404).json({
-      uuAppErrorMap: {
-        "item/notFound": {
-          type: "error",
-          message: "Item not found.",
-          paramMap: { itemId }
-        }
-      }
-    });
+    addError(uuAppErrorMap, `${codePrefix}/notFound`, "Item not found.", "error", { itemId });
+    res.status(404).json({ uuAppErrorMap });
     return null;
   }
   return item;
-}
+};
 
-function ensureShoppingListExists(res, shoppingListId) {
-  const shoppingList = getShoppingList(shoppingListId);
+const ensureShoppingListExists = async (shoppingListId, res, uuAppErrorMap, codePrefix) => {
+  const shoppingList = await getShoppingList(shoppingListId);
   if (!shoppingList) {
-    res.status(404).json({
-      uuAppErrorMap: {
-        "shoppingList/notFound": {
-          type: "error",
-          message: "Shopping list not found.",
-          paramMap: { shoppingListId }
-        }
-      }
-    });
+    addError(
+      uuAppErrorMap,
+      `${codePrefix}/listNotFound`,
+      "Shopping list not found.",
+      "error",
+      { shoppingListId }
+    );
+    res.status(404).json({ uuAppErrorMap });
     return null;
   }
   return shoppingList;
-}
+};
 
-function ensureMembership(shoppingListId, userId, roles, res) {
-  const membership = findMembership(shoppingListId, userId);
+const ensureMembership = async (
+  shoppingListId,
+  userId,
+  roles,
+  res,
+  uuAppErrorMap,
+  codePrefix
+) => {
+  const membership = await findMembership(shoppingListId, userId);
   if (!membership || (roles && !roles.includes(membership.role))) {
-    res.status(403).json({
-      uuAppErrorMap: {
-        "authorization/forbidden": {
-          type: "error",
-          message: "User is not allowed to access this shopping list.",
-          paramMap: { shoppingListId, userId }
-        }
-      }
-    });
+    addError(
+      uuAppErrorMap,
+      `${codePrefix}/notAuthorized`,
+      "User is not allowed to access this shopping list.",
+      "error",
+      { shoppingListId, userId }
+    );
+    res.status(403).json({ uuAppErrorMap });
     return null;
   }
   return membership;
-}
+};
 
 /**
  * 9) item/create
@@ -77,65 +84,121 @@ function ensureMembership(shoppingListId, userId, roles, res) {
 const createItemDtoIn = z.object({
   shoppingListId: z.string().min(1),
   name: z.string().min(1).max(255),
-  quantity: z.string().optional()
+  quantity: z.string().optional().default(""),
+  note: z.string().optional().default("")
 });
 
-router.post(
-  "/create",
-  auth(["owner", "member"]),
-  validate(createItemDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn;
-    const shoppingList = ensureShoppingListExists(res, dtoIn.shoppingListId);
-    if (!shoppingList) return;
-    if (!ensureMembership(dtoIn.shoppingListId, req.userId, ["owner", "member"], res)) return;
-    const item = createItem({
-      shoppingListId: dtoIn.shoppingListId,
-      name: dtoIn.name,
-      quantity: dtoIn.quantity,
-      createdBy: req.userId
-    });
-    return res.json({
-      item,
-      uuAppErrorMap: {}
-    });
+const handleCreate = [
+  auth,
+  validateDtoIn(createItemDtoIn, "item/create"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn;
+      const shoppingList = await ensureShoppingListExists(
+        dtoIn.shoppingListId,
+        res,
+        uuAppErrorMap,
+        "item/create"
+      );
+      if (!shoppingList) return;
+      if (
+        !(await ensureMembership(
+          dtoIn.shoppingListId,
+          req.user.id,
+          ["owner", "member"],
+          res,
+          uuAppErrorMap,
+          "item/create"
+        ))
+      )
+        return;
+      const item = await createItem({
+        shoppingListId: dtoIn.shoppingListId,
+        name: dtoIn.name,
+        quantity: dtoIn.quantity,
+        note: dtoIn.note,
+        createdBy: req.user.id
+      });
+      if (!item) {
+        addError(
+          uuAppErrorMap,
+          "item/create/systemError",
+          "Item could not be created.",
+          "error"
+        );
+        return res.status(500).json({ uuAppErrorMap });
+      }
+      return res.json({ item, uuAppErrorMap });
+    } catch (error) {
+      console.error("item/create failed:", error);
+      addError(uuAppErrorMap, "item/create/systemError", "Unexpected server error.", "error");
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/create", ...handleCreate);
 
 /**
  * 10) item/list
  */
 const listItemDtoIn = z.object({
   shoppingListId: z.string().min(1),
-  done: z.boolean().optional(),
+  done: z.coerce.boolean().optional(),
   pageInfo: pageInfoSchema.optional()
 });
 
-router.post(
-  "/list",
-  auth(["owner", "member"]),
-  validate(listItemDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn;
-    const shoppingList = ensureShoppingListExists(res, dtoIn.shoppingListId);
-    if (!shoppingList) return;
-    if (!ensureMembership(dtoIn.shoppingListId, req.userId, ["owner", "member"], res)) return;
-    const pageIndex = dtoIn.pageInfo?.pageIndex ?? 0;
-    const pageSize = dtoIn.pageInfo?.pageSize ?? 50;
-    const all = listItems(dtoIn.shoppingListId, dtoIn.done);
-    const start = pageIndex * pageSize;
-    const items = all.slice(start, start + pageSize);
-    return res.json({
-      items,
-      pageInfo: {
-        pageIndex,
-        pageSize,
-        total: all.length
-      },
-      uuAppErrorMap: {}
-    });
+const handleList = [
+  auth,
+  normalizeDtoFromQuery,
+  validateDtoIn(listItemDtoIn, "item/list"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn;
+      const shoppingList = await ensureShoppingListExists(
+        dtoIn.shoppingListId,
+        res,
+        uuAppErrorMap,
+        "item/list"
+      );
+      if (!shoppingList) return;
+      if (
+        !(await ensureMembership(
+          dtoIn.shoppingListId,
+          req.user.id,
+          ["owner", "member"],
+          res,
+          uuAppErrorMap,
+          "item/list"
+        ))
+      )
+        return;
+      const pageIndex = dtoIn.pageInfo?.pageIndex ?? 0;
+      const pageSize = dtoIn.pageInfo?.pageSize ?? 50;
+      const all = await listItems(dtoIn.shoppingListId, dtoIn.done);
+      const start = pageIndex * pageSize;
+      const items = all.slice(start, start + pageSize);
+      return res.json({
+        items,
+        pageInfo: {
+          pageIndex,
+          pageSize,
+          total: all.length
+        },
+        uuAppErrorMap
+      });
+    } catch (error) {
+      console.error("item/list failed:", error);
+      addError(uuAppErrorMap, "item/list/systemError", "Unexpected server error.", "error");
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/list", ...handleList);
+router.get("/list", ...handleList);
 
 /**
  * 11) item/update
@@ -143,73 +206,114 @@ router.post(
 const updateItemDtoIn = z.object({
   itemId: z.string().min(1),
   name: z.string().min(1).max(255).optional(),
-  quantity: z.string().optional()
+  quantity: z.string().optional(),
+  note: z.string().optional()
 });
 
-router.post(
-  "/update",
-  auth(["owner", "member"]),
-  validate(updateItemDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn;
-    const item = ensureItemExists(res, dtoIn.itemId);
-    if (!item) return;
-    const shoppingList = ensureShoppingListExists(res, item.shoppingListId);
-    if (!shoppingList) return;
-    if (!ensureMembership(item.shoppingListId, req.userId, ["owner", "member"], res)) return;
-    const updated = updateItem(dtoIn.itemId, {
-      name: dtoIn.name ?? item.name,
-      quantity: dtoIn.quantity ?? item.quantity
-    });
-    return res.json({
-      item: updated,
-      uuAppErrorMap: {}
-    });
+const handleUpdate = [
+  auth,
+  validateDtoIn(updateItemDtoIn, "item/update"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn;
+      const item = await ensureItemExists(dtoIn.itemId, res, uuAppErrorMap, "item/update");
+      if (!item) return;
+      const shoppingList = await ensureShoppingListExists(
+        item.shoppingListId,
+        res,
+        uuAppErrorMap,
+        "item/update"
+      );
+      if (!shoppingList) return;
+      if (
+        !(await ensureMembership(
+          item.shoppingListId,
+          req.user.id,
+          ["owner", "member"],
+          res,
+          uuAppErrorMap,
+          "item/update"
+        ))
+      )
+        return;
+      const updated = await updateItem(dtoIn.itemId, {
+        text: dtoIn.name ?? item.name,
+        name: dtoIn.name ?? item.name,
+        amount: dtoIn.quantity ?? item.quantity,
+        note: dtoIn.note ?? item.note
+      });
+      return res.json({ item: updated, uuAppErrorMap });
+    } catch (error) {
+      console.error("item/update failed:", error);
+      addError(uuAppErrorMap, "item/update/systemError", "Unexpected server error.", "error");
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/update", ...handleUpdate);
+router.patch("/update", ...handleUpdate);
 
 /**
  * 12) item/markDone
  */
 const markDoneDtoIn = z.object({
   itemId: z.string().min(1),
-  done: z.boolean()
+  done: z.coerce.boolean()
 });
 
-router.post(
-  "/markDone",
-  auth(["owner", "member"]),
-  validate(markDoneDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn;
-    const item = ensureItemExists(res, dtoIn.itemId);
-    if (!item) return;
-    const shoppingList = ensureShoppingListExists(res, item.shoppingListId);
-    if (!shoppingList) return;
-    const membership = ensureMembership(item.shoppingListId, req.userId, ["owner", "member"], res);
-    if (!membership) return;
-    if (membership.role !== "owner" && !shoppingList.canMarkItemsDoneByAll) {
-      return res.status(403).json({
-        uuAppErrorMap: {
-          "authorization/forbidden": {
-            type: "error",
-            message: "Member cannot mark items done for this shopping list.",
-            paramMap: { shoppingListId: item.shoppingListId }
-          }
-        }
+const handleMarkDone = [
+  auth,
+  validateDtoIn(markDoneDtoIn, "item/markDone"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn;
+      const item = await ensureItemExists(dtoIn.itemId, res, uuAppErrorMap, "item/markDone");
+      if (!item) return;
+      const shoppingList = await ensureShoppingListExists(
+        item.shoppingListId,
+        res,
+        uuAppErrorMap,
+        "item/markDone"
+      );
+      if (!shoppingList) return;
+      const membership = await ensureMembership(
+        item.shoppingListId,
+        req.user.id,
+        ["owner", "member"],
+        res,
+        uuAppErrorMap,
+        "item/markDone"
+      );
+      if (!membership) return;
+      if (membership.role !== "owner" && !shoppingList.canMarkItemsDoneByAll) {
+        addError(
+          uuAppErrorMap,
+          "item/markDone/notAuthorized",
+          "Member cannot mark items done for this shopping list.",
+          "error",
+          { shoppingListId: item.shoppingListId }
+        );
+        return res.status(403).json({ uuAppErrorMap });
+      }
+      const updated = await updateItem(dtoIn.itemId, {
+        isDone: dtoIn.done,
+        doneBy: dtoIn.done ? req.user.id : null,
+        doneAt: dtoIn.done ? new Date().toISOString() : null
       });
+      return res.json({ item: updated, uuAppErrorMap });
+    } catch (error) {
+      console.error("item/markDone failed:", error);
+      addError(uuAppErrorMap, "item/markDone/systemError", "Unexpected server error.", "error");
+      return res.status(500).json({ uuAppErrorMap });
     }
-    const updated = updateItem(dtoIn.itemId, {
-      done: dtoIn.done,
-      doneBy: dtoIn.done ? req.userId : null,
-      doneAt: dtoIn.done ? new Date().toISOString() : null
-    });
-    return res.json({
-      item: updated,
-      uuAppErrorMap: {}
-    });
   }
-);
+];
+
+router.post("/markDone", ...handleMarkDone);
+router.patch("/markDone", ...handleMarkDone);
 
 /**
  * 13) item/delete
@@ -218,23 +322,55 @@ const deleteItemDtoIn = z.object({
   itemId: z.string().min(1)
 });
 
-router.post(
-  "/delete",
-  auth(["owner", "member"]),
-  validate(deleteItemDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn;
-    const item = ensureItemExists(res, dtoIn.itemId);
-    if (!item) return;
-    const shoppingList = ensureShoppingListExists(res, item.shoppingListId);
-    if (!shoppingList) return;
-    if (!ensureMembership(item.shoppingListId, req.userId, ["owner", "member"], res)) return;
-    deleteItem(dtoIn.itemId);
-    return res.json({
-      itemId: dtoIn.itemId,
-      uuAppErrorMap: {}
-    });
+const handleDelete = [
+  auth,
+  normalizeDtoFromQuery,
+  validateDtoIn(deleteItemDtoIn, "item/delete"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn;
+      const item = await ensureItemExists(dtoIn.itemId, res, uuAppErrorMap, "item/delete");
+      if (!item) return;
+      const shoppingList = await ensureShoppingListExists(
+        item.shoppingListId,
+        res,
+        uuAppErrorMap,
+        "item/delete"
+      );
+      if (!shoppingList) return;
+      if (
+        !(await ensureMembership(
+          item.shoppingListId,
+          req.user.id,
+          ["owner", "member"],
+          res,
+          uuAppErrorMap,
+          "item/delete"
+        ))
+      )
+        return;
+      const removed = await deleteItem(dtoIn.itemId);
+      if (!removed) {
+        addError(
+          uuAppErrorMap,
+          "item/delete/notDeleted",
+          "Item could not be deleted.",
+          "error",
+          { itemId: dtoIn.itemId }
+        );
+        return res.status(400).json({ uuAppErrorMap });
+      }
+      return res.json({ itemId: dtoIn.itemId, uuAppErrorMap });
+    } catch (error) {
+      console.error("item/delete failed:", error);
+      addError(uuAppErrorMap, "item/delete/systemError", "Unexpected server error.", "error");
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/delete", ...handleDelete);
+router.delete("/delete", ...handleDelete);
 
 module.exports = router;

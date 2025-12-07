@@ -1,30 +1,27 @@
-// src/app.js
 const express = require("express");
+const { connectToDb } = require("./data/store");
 const shoppingListRoutes = require("./routes/shoppingList");
 const itemRoutes = require("./routes/item");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// middleware pro JSON body
 app.use(express.json());
 
-// jednoduchý log (volitelné)
+// simple console log for debugging requests
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`);
   next();
 });
 
-// registrace routes
 app.use("/shoppingList", shoppingListRoutes);
 app.use("/item", itemRoutes);
 
-// jednoduchý health-check endpoint
 app.get("/", (req, res) => {
-  res.json({ status: "ok", message: "Shopping List API is running." });
+  res.json({ status: "ok", message: "Shopping List API is running.", uuAppErrorMap: {} });
 });
 
-// fallback pro neznámé cesty
+// fallback for unknown routes
 app.use((req, res) => {
   res.status(404).json({
     uuAppErrorMap: {
@@ -37,6 +34,18 @@ app.use((req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-});
+const start = async () => {
+  try {
+    await connectToDb();
+    app.listen(PORT, () => {
+      console.log(`Server is running on http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  }
+};
+
+start();
+
+module.exports = app;

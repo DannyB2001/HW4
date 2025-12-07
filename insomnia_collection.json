@@ -1,0 +1,209 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2025-12-07T00:00:00.000Z",
+  "__export_source": "codex-manual",
+  "resources": [
+    {
+      "_id": "wrk_hw4",
+      "parentId": null,
+      "_type": "workspace",
+      "name": "Shopping List HW4",
+      "description": "Insomnia collection for HW4 shopping list API"
+    },
+    {
+      "_id": "env_hw4_base",
+      "parentId": "wrk_hw4",
+      "_type": "environment",
+      "name": "Base Environment",
+      "data": {
+        "base_url": "http://localhost:3000",
+        "userId": "u1",
+        "memberId": "u2"
+      }
+    },
+    {
+      "_id": "req_sl_create",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "shoppingList/create",
+      "method": "POST",
+      "url": "{{ _.base_url }}/shoppingList/create",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"name\": \"Groceries\",\n  \"description\": \"Weekend\",\n  \"canMarkItemsDoneByAll\": true\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-user-id", "value": "{{ _.userId }}" }
+      ]
+    },
+    {
+      "_id": "req_sl_listMine",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "shoppingList/listMine",
+      "method": "POST",
+      "url": "{{ _.base_url }}/shoppingList/listMine",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"state\": \"active\",\n  \"pageInfo\": { \"pageIndex\": 0, \"pageSize\": 50 }\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-user-id", "value": "{{ _.userId }}" }
+      ]
+    },
+    {
+      "_id": "req_sl_get",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "shoppingList/get",
+      "method": "POST",
+      "url": "{{ _.base_url }}/shoppingList/get",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{ \"shoppingListId\": \"<fill-from-create>\" }"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-user-id", "value": "{{ _.userId }}" }
+      ]
+    },
+    {
+      "_id": "req_sl_update",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "shoppingList/update",
+      "method": "POST",
+      "url": "{{ _.base_url }}/shoppingList/update",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"shoppingListId\": \"<fill-from-create>\",\n  \"name\": \"Groceries updated\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-user-id", "value": "{{ _.userId }}" }
+      ]
+    },
+    {
+      "_id": "req_sl_delete",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "shoppingList/delete",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/shoppingList/delete?shoppingListId=<fill-from-create>",
+      "headers": [
+        { "name": "x-user-id", "value": "{{ _.userId }}" }
+      ]
+    },
+    {
+      "_id": "req_sl_addMember",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "shoppingList/addMember",
+      "method": "POST",
+      "url": "{{ _.base_url }}/shoppingList/addMember",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"shoppingListId\": \"<fill-from-create>\",\n  \"memberId\": \"{{ _.memberId }}\",\n  \"role\": \"member\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-user-id", "value": "{{ _.userId }}" }
+      ]
+    },
+    {
+      "_id": "req_sl_removeMember",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "shoppingList/removeMember",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/shoppingList/removeMember?shoppingListId=<fill-from-create>&memberId={{ _.memberId }}",
+      "headers": [
+        { "name": "x-user-id", "value": "{{ _.userId }}" }
+      ]
+    },
+    {
+      "_id": "req_sl_listMembers",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "shoppingList/listMembers",
+      "method": "GET",
+      "url": "{{ _.base_url }}/shoppingList/listMembers?shoppingListId=<fill-from-create>",
+      "headers": [
+        { "name": "x-user-id", "value": "{{ _.userId }}" }
+      ]
+    },
+    {
+      "_id": "req_item_create",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "item/create",
+      "method": "POST",
+      "url": "{{ _.base_url }}/item/create",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"shoppingListId\": \"<fill-from-create>\",\n  \"name\": \"Milk\",\n  \"quantity\": \"2L\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-user-id", "value": "{{ _.memberId }}" }
+      ]
+    },
+    {
+      "_id": "req_item_list",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "item/list",
+      "method": "GET",
+      "url": "{{ _.base_url }}/item/list?shoppingListId=<fill-from-create>",
+      "headers": [
+        { "name": "x-user-id", "value": "{{ _.memberId }}" }
+      ]
+    },
+    {
+      "_id": "req_item_update",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "item/update",
+      "method": "POST",
+      "url": "{{ _.base_url }}/item/update",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"itemId\": \"<fill-from-item-create>\",\n  \"name\": \"Milk low-fat\",\n  \"quantity\": \"1L\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-user-id", "value": "{{ _.memberId }}" }
+      ]
+    },
+    {
+      "_id": "req_item_markDone",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "item/markDone",
+      "method": "POST",
+      "url": "{{ _.base_url }}/item/markDone",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{ \"itemId\": \"<fill-from-item-create>\", \"done\": true }"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-user-id", "value": "{{ _.memberId }}" }
+      ]
+    },
+    {
+      "_id": "req_item_delete",
+      "parentId": "wrk_hw4",
+      "_type": "request",
+      "name": "item/delete",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/item/delete?itemId=<fill-from-item-create>",
+      "headers": [
+        { "name": "x-user-id", "value": "{{ _.memberId }}" }
+      ]
+    }
+  ]
+}

@@ -1,77 +1,86 @@
-# Shopping List API (uuCmd demo)
+# Shopping List API (HW4)
 
-Jednoduchá Node.js/Express aplikace imitující uuApp zadání: shopping listy, položky a členství nad in-memory úložištěm. Obsahuje validační middleware (Zod), autorizaci přes profily a vrací `uuAppErrorMap`.
+Node.js/Express REST API with uuCmd-style endpoints for shopping lists and items. HW4 upgrades the HW3 in-memory version to MongoDB with richer validation and error handling.
 
-## Spuštění
-1. `npm install`
-2. `npm start` (server na `http://localhost:3000`)
+## What changed from HW3 to HW4
+- MongoDB persistence via the official driver (`MONGO_URI`).
+- New DB helper (`src/data/store.js`) replacing in-memory arrays; exposes DAOs for shoppingList, item, membership.
+- Generic dtoIn validation middleware with unsupported-key warnings and `invalidDtoIn` errors; applies defaults.
+- Every response returns `uuAppErrorMap`; domain errors/warnings are recorded there.
+- Auth now uses header `x-user-id` and membership-based authorization (owner/member) per shopping list.
+- Routes refactored to async/await with MongoDB; uuCmd names and dtoIn/dtoOut shapes stay compatible with HW3.
 
-## Autentizace a profily
-- `x-user-id`: identita volajícího (povinné)
-- `x-profile`: profil musí odpovídat povoleným rolím endpointu (`user`, `owner`, `member`)
+## How to run
+1) Install deps: `npm install`
+2) Start MongoDB:
+   - Docker quick start: `docker run -d --name shopping-mongo -p 27017:27017 mongo:7`
+   - Or docker-compose (optional):
+     ```yaml
+     version: "3.9"
+     services:
+       mongo:
+         image: mongo:7
+         restart: unless-stopped
+         ports: ["27017:27017"]
+         volumes: [ "mongo-data:/data/db" ]
+         environment:
+           MONGO_INITDB_DATABASE: shopping-list
+     volumes:
+       mongo-data:
+     ```
+     Run: `docker compose up -d`
+3) Set Mongo URI (PowerShell example):
+   - Current session: `$env:MONGO_URI="mongodb://localhost:27017/shopping-list"`
+   - Persistent: `setx MONGO_URI "mongodb://localhost:27017/shopping-list"`
+4) Start API: `npm start` (listens on `http://localhost:3000`)
+5) Optional: set `AWID` env if you want to stamp documents with awid (defaults to null).
 
-## Endpoints (uuCmd)
-Base path: `/`
+Insomnia collection is provided in `insomnia_collection.json` (import into Insomnia).
 
-### Shopping list
-- `POST /shoppingList/create` (profile `user`)  
-  dtoIn: `{ name, description?, canMarkItemsDoneByAll? }`  
-  dtoOut: `{ shoppingList, uuAppErrorMap }`
+## Calling the API
+- Base path `/`; required header: `x-user-id: <your-user>`.
+- Responses always include `uuAppErrorMap` (warnings/errors).
+- GET/DELETE accept dtoIn via query string; POST/PATCH use JSON body.
 
-- `POST /shoppingList/listMine` (profile `user`)  
-  dtoIn: `{ state?, pageInfo?: { pageIndex?, pageSize? } }`  
-  dtoOut: `{ shoppingLists, pageInfo, uuAppErrorMap }`
+### Shopping list uuCmds
+- `POST /shoppingList/create` — `{ name, description?, canMarkItemsDoneByAll? }` (owner auto-set)
+- `POST` or `GET /shoppingList/listMine` — `{ state?, pageInfo?: { pageIndex?, pageSize? } }`
+- `POST` or `GET /shoppingList/get` — `{ shoppingListId }` (owner|member)
+- `POST` or `PATCH /shoppingList/update` — `{ shoppingListId, name?, description?, canMarkItemsDoneByAll?, state? }` (owner)
+- `POST` or `DELETE /shoppingList/delete` — `{ shoppingListId }` (owner)
+- `POST /shoppingList/addMember` — `{ shoppingListId, memberId, role? }` (owner)
+- `POST` or `DELETE /shoppingList/removeMember` — `{ shoppingListId, memberId }` (owner)
+- `POST` or `GET /shoppingList/listMembers` — `{ shoppingListId }` (owner|member)
 
-- `POST /shoppingList/get` (profiles `owner|member|user` + členství)  
-  dtoIn: `{ shoppingListId }`  
-  dtoOut: `{ shoppingList, uuAppErrorMap }`
+### Item uuCmds
+- `POST /item/create` — `{ shoppingListId, name, quantity?, note? }` (owner|member)
+- `POST` or `GET /item/list` — `{ shoppingListId, done?, pageInfo?: { pageIndex?, pageSize? } }` (owner|member)
+- `POST` or `PATCH /item/update` — `{ itemId, name?, quantity?, note? }` (owner|member)
+- `POST` or `PATCH /item/markDone` — `{ itemId, done }` (owner|member; respects `canMarkItemsDoneByAll`)
+- `POST` or `DELETE /item/delete` — `{ itemId }` (owner|member)
 
-- `POST /shoppingList/update` (profile `owner`)  
-  dtoIn: `{ shoppingListId, name?, description?, canMarkItemsDoneByAll?, state? }`  
-  dtoOut: `{ shoppingList, uuAppErrorMap }`
+## Scenario descriptions
+1) Create list → Add member → List members → Member adds items → Member marks done (if allowed).  
+   - `/shoppingList/create` (owner) → `/shoppingList/addMember` (owner) → `/shoppingList/listMembers` → `/item/create` (member) → `/item/markDone`.
+2) Owner-only maintenance flow.  
+   - `/shoppingList/update` to change name/description/state → `/shoppingList/delete` to remove; owner permissions enforced.
+3) Browsing and paging your lists and items.  
+   - `/shoppingList/listMine` with `pageInfo` → pick `shoppingListId` → `/item/list` with `pageInfo` and optional `done` filter.
+4) Membership cleanup.  
+   - `/shoppingList/removeMember` removes a member; any subsequent item/list calls by that user will return 403.
 
-- `POST /shoppingList/delete` (profile `owner`)  
-  dtoIn: `{ shoppingListId }`  
-  dtoOut: `{ shoppingListId, uuAppErrorMap }`
+## Command flow template (applies to every uuCmd here)
+1) Validation of dtoIn.  
+   1.1 Validate dtoIn against its schema (Zod) and build validationResult.  
+   1.2 Add `unsupportedKeys` warning if keys beyond schema are present.  
+   1.3 Reject with `invalidDtoIn` error if types/values are invalid or required keys are missing.  
+   1.4 Apply defaults declared in schema (e.g., `pageInfo.pageIndex`, `canMarkItemsDoneByAll`, `quantity`, `note`).
+2) Business logic.  
+   - Authorization via membership (owner/member) as required by the uuCmd.  
+   - MongoDB read/write using DAO in `src/data/store.js`.  
+   - Domain errors populate `uuAppErrorMap` (e.g., notFound, notAuthorized, notDeleted).
+3) Return dtoOut with data and `uuAppErrorMap`.
 
-- `POST /shoppingList/addMember` (profile `owner`)  
-  dtoIn: `{ shoppingListId, memberId, role? }`  
-  dtoOut: `{ membership, uuAppErrorMap }` (warning pokud už existuje)
-
-- `POST /shoppingList/removeMember` (profile `owner`)  
-  dtoIn: `{ shoppingListId, memberId }`  
-  dtoOut: `{ removed, uuAppErrorMap }`
-
-- `POST /shoppingList/listMembers` (profiles `owner|member`)  
-  dtoIn: `{ shoppingListId }`  
-  dtoOut: `{ members, uuAppErrorMap }`
-
-### Item
-- `POST /item/create` (profiles `owner|member`)  
-  dtoIn: `{ shoppingListId, name, quantity? }`  
-  dtoOut: `{ item, uuAppErrorMap }`
-
-- `POST /item/list` (profiles `owner|member`)  
-  dtoIn: `{ shoppingListId, done?, pageInfo?: { pageIndex?, pageSize? } }`  
-  dtoOut: `{ items, pageInfo, uuAppErrorMap }`
-
-- `POST /item/update` (profiles `owner|member`)  
-  dtoIn: `{ itemId, name?, quantity? }`  
-  dtoOut: `{ item, uuAppErrorMap }`
-
-- `POST /item/markDone` (profiles `owner|member`, respektuje `canMarkItemsDoneByAll`)  
-  dtoIn: `{ itemId, done }`  
-  dtoOut: `{ item, uuAppErrorMap }`
-
-- `POST /item/delete` (profiles `owner|member`)  
-  dtoIn: `{ itemId }`  
-  dtoOut: `{ itemId, uuAppErrorMap }`
-
-## In-memory úložiště
-- `src/data/store.js` udržuje pole `shoppingLists`, `items`, `memberships` + helpery pro CRUD.
-- Při vytvoření listu se zakládá owner membership; mazání listu smaže i jeho items/memberships.
-- DTO používají `shoppingListId`/`itemId`/`memberId` v souladu s návrhem.
-
-## Známá omezení
-- Není perzistence do DB; restart procesu resetuje data.
-- Autorizace vychází jen z hlaviček a in-memory membership, nikoli z externí identity/uuIdentity.
+### Error list (shared)
+- Warning `unsupportedKeys`: DtoIn contains unsupported keys. Parametry: `{ "unsupportedKeyList": [...] }`
+- Error `invalidDtoIn`: DtoIn is not valid. Parametry: `{ "invalidTypeKeyMap": {}, "invalidValueKeyMap": {}, "missingKeyMap": {} }`

@@ -1,8 +1,6 @@
-// src/routes/shoppingList.js
 const express = require("express");
-const { z } = require("zod");
 const auth = require("../middleware/auth");
-const validate = require("../middleware/validate");
+const { validateDtoIn, z } = require("../middleware/validate");
 const {
   createShoppingList,
   getShoppingList,
@@ -18,71 +16,97 @@ const {
 const router = express.Router();
 
 const pageInfoSchema = z.object({
-  pageIndex: z.number().int().nonnegative().default(0),
-  pageSize: z.number().int().positive().default(50)
+  pageIndex: z.coerce.number().int().nonnegative().default(0),
+  pageSize: z.coerce.number().int().positive().default(50)
 });
 
-function ensureShoppingListExists(res, shoppingListId) {
-  const shoppingList = getShoppingList(shoppingListId);
+const addError = (uuAppErrorMap, code, message, type = "error", paramMap = {}) => {
+  uuAppErrorMap[code] = { type, message, paramMap };
+};
+
+const normalizeDtoFromQuery = (req, res, next) => {
+  if (req.method === "GET" || req.method === "DELETE") {
+    req.body = { ...req.query };
+  }
+  next();
+};
+
+const ensureShoppingListExists = async (shoppingListId, res, uuAppErrorMap, codePrefix) => {
+  const shoppingList = await getShoppingList(shoppingListId);
   if (!shoppingList) {
-    res.status(404).json({
-      uuAppErrorMap: {
-        "shoppingList/notFound": {
-          type: "error",
-          message: "Shopping list not found.",
-          paramMap: { shoppingListId }
-        }
-      }
-    });
+    addError(
+      uuAppErrorMap,
+      `${codePrefix}/notFound`,
+      "Shopping list not found.",
+      "error",
+      { shoppingListId }
+    );
+    res.status(404).json({ uuAppErrorMap });
     return null;
   }
   return shoppingList;
-}
+};
 
-function ensureMembership(shoppingListId, userId, roles, res) {
-  const membership = findMembership(shoppingListId, userId);
+const ensureMembership = async (
+  shoppingListId,
+  userId,
+  roles,
+  res,
+  uuAppErrorMap,
+  codePrefix
+) => {
+  const membership = await findMembership(shoppingListId, userId);
   if (!membership || (roles && !roles.includes(membership.role))) {
-    res.status(403).json({
-      uuAppErrorMap: {
-        "authorization/forbidden": {
-          type: "error",
-          message: "User is not allowed to access this shopping list.",
-          paramMap: { shoppingListId, userId }
-        }
-      }
-    });
+    addError(
+      uuAppErrorMap,
+      `${codePrefix}/notAuthorized`,
+      "User is not allowed to access this shopping list.",
+      "error",
+      { shoppingListId, userId }
+    );
+    res.status(403).json({ uuAppErrorMap });
     return null;
   }
   return membership;
-}
+};
 
 /**
  * 1) shoppingList/create
  */
 const createShoppingListDtoIn = z.object({
   name: z.string().min(1).max(255),
-  description: z.string().optional(),
-  canMarkItemsDoneByAll: z.boolean().optional()
+  description: z.string().optional().default(""),
+  canMarkItemsDoneByAll: z.coerce.boolean().optional().default(false)
 });
 
-router.post(
-  "/create",
-  auth(["user"]),
-  validate(createShoppingListDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn;
-    const shoppingList = createShoppingList({
-      name: dtoIn.name,
-      description: dtoIn.description,
-      canMarkItemsDoneByAll: dtoIn.canMarkItemsDoneByAll,
-      ownerId: req.userId
-    });
-    return res.json({
-      shoppingList,
-      uuAppErrorMap: {}
-    });
+const handleCreate = [
+  auth,
+  validateDtoIn(createShoppingListDtoIn, "shoppingList/create"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn;
+      const shoppingList = await createShoppingList({
+        name: dtoIn.name,
+        description: dtoIn.description,
+        canMarkItemsDoneByAll: dtoIn.canMarkItemsDoneByAll,
+        ownerId: req.user.id
+      });
+      return res.json({ shoppingList, uuAppErrorMap });
+    } catch (error) {
+      console.error("shoppingList/create failed:", error);
+      addError(
+        uuAppErrorMap,
+        "shoppingList/create/systemError",
+        "Unexpected server error.",
+        "error"
+      );
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/create", ...handleCreate);
 
 /**
  * 2) shoppingList/listMine
@@ -94,28 +118,43 @@ const listMineDtoIn = z
   })
   .default({});
 
-router.post(
-  "/listMine",
-  auth(["user"]),
-  validate(listMineDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn || {};
-    const pageIndex = dtoIn.pageInfo?.pageIndex ?? 0;
-    const pageSize = dtoIn.pageInfo?.pageSize ?? 50;
-    const all = listShoppingListsByUser(req.userId, dtoIn.state);
-    const start = pageIndex * pageSize;
-    const shoppingLists = all.slice(start, start + pageSize);
-    return res.json({
-      shoppingLists,
-      pageInfo: {
-        pageIndex,
-        pageSize,
-        total: all.length
-      },
-      uuAppErrorMap: {}
-    });
+const handleListMine = [
+  auth,
+  normalizeDtoFromQuery,
+  validateDtoIn(listMineDtoIn, "shoppingList/listMine"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn || {};
+      const pageIndex = dtoIn.pageInfo?.pageIndex ?? 0;
+      const pageSize = dtoIn.pageInfo?.pageSize ?? 50;
+      const all = await listShoppingListsByUser(req.user.id, dtoIn.state);
+      const start = pageIndex * pageSize;
+      const shoppingLists = all.slice(start, start + pageSize);
+      return res.json({
+        shoppingLists,
+        pageInfo: {
+          pageIndex,
+          pageSize,
+          total: all.length
+        },
+        uuAppErrorMap
+      });
+    } catch (error) {
+      console.error("shoppingList/listMine failed:", error);
+      addError(
+        uuAppErrorMap,
+        "shoppingList/listMine/systemError",
+        "Unexpected server error.",
+        "error"
+      );
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/listMine", ...handleListMine);
+router.get("/listMine", ...handleListMine);
 
 /**
  * 3) shoppingList/get
@@ -124,21 +163,48 @@ const getShoppingListDtoIn = z.object({
   shoppingListId: z.string().min(1)
 });
 
-router.post(
-  "/get",
-  auth(["owner", "member", "user"]),
-  validate(getShoppingListDtoIn),
-  (req, res) => {
-    const { shoppingListId } = req.dtoIn;
-    const shoppingList = ensureShoppingListExists(res, shoppingListId);
-    if (!shoppingList) return;
-    if (!ensureMembership(shoppingListId, req.userId, ["owner", "member"], res)) return;
-    return res.json({
-      shoppingList,
-      uuAppErrorMap: {}
-    });
+const handleGet = [
+  auth,
+  normalizeDtoFromQuery,
+  validateDtoIn(getShoppingListDtoIn, "shoppingList/get"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const { shoppingListId } = req.dtoIn;
+      const shoppingList = await ensureShoppingListExists(
+        shoppingListId,
+        res,
+        uuAppErrorMap,
+        "shoppingList/get"
+      );
+      if (!shoppingList) return;
+      if (
+        !(await ensureMembership(
+          shoppingListId,
+          req.user.id,
+          ["owner", "member"],
+          res,
+          uuAppErrorMap,
+          "shoppingList/get"
+        ))
+      )
+        return;
+      return res.json({ shoppingList, uuAppErrorMap });
+    } catch (error) {
+      console.error("shoppingList/get failed:", error);
+      addError(
+        uuAppErrorMap,
+        "shoppingList/get/systemError",
+        "Unexpected server error.",
+        "error"
+      );
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/get", ...handleGet);
+router.get("/get", ...handleGet);
 
 /**
  * 4) shoppingList/update
@@ -147,32 +213,58 @@ const updateShoppingListDtoIn = z.object({
   shoppingListId: z.string().min(1),
   name: z.string().min(1).max(255).optional(),
   description: z.string().optional(),
-  canMarkItemsDoneByAll: z.boolean().optional(),
+  canMarkItemsDoneByAll: z.coerce.boolean().optional(),
   state: z.enum(["active", "archived"]).optional()
 });
 
-router.post(
-  "/update",
-  auth(["owner"]),
-  validate(updateShoppingListDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn;
-    const shoppingList = ensureShoppingListExists(res, dtoIn.shoppingListId);
-    if (!shoppingList) return;
-    if (!ensureMembership(dtoIn.shoppingListId, req.userId, ["owner"], res)) return;
-    const updated = updateShoppingList(dtoIn.shoppingListId, {
-      name: dtoIn.name ?? shoppingList.name,
-      description: dtoIn.description ?? shoppingList.description,
-      canMarkItemsDoneByAll:
-        dtoIn.canMarkItemsDoneByAll ?? shoppingList.canMarkItemsDoneByAll,
-      state: dtoIn.state ?? shoppingList.state
-    });
-    return res.json({
-      shoppingList: updated,
-      uuAppErrorMap: {}
-    });
+const handleUpdate = [
+  auth,
+  validateDtoIn(updateShoppingListDtoIn, "shoppingList/update"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn;
+      const shoppingList = await ensureShoppingListExists(
+        dtoIn.shoppingListId,
+        res,
+        uuAppErrorMap,
+        "shoppingList/update"
+      );
+      if (!shoppingList) return;
+      if (
+        !(await ensureMembership(
+          dtoIn.shoppingListId,
+          req.user.id,
+          ["owner"],
+          res,
+          uuAppErrorMap,
+          "shoppingList/update"
+        ))
+      )
+        return;
+      const updated = await updateShoppingList(dtoIn.shoppingListId, {
+        name: dtoIn.name ?? shoppingList.name,
+        description: dtoIn.description ?? shoppingList.description,
+        canMarkItemsDoneByAll:
+          dtoIn.canMarkItemsDoneByAll ?? shoppingList.canMarkItemsDoneByAll,
+        state: dtoIn.state ?? shoppingList.state
+      });
+      return res.json({ shoppingList: updated, uuAppErrorMap });
+    } catch (error) {
+      console.error("shoppingList/update failed:", error);
+      addError(
+        uuAppErrorMap,
+        "shoppingList/update/systemError",
+        "Unexpected server error.",
+        "error"
+      );
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/update", ...handleUpdate);
+router.patch("/update", ...handleUpdate);
 
 /**
  * 5) shoppingList/delete
@@ -181,22 +273,59 @@ const deleteShoppingListDtoIn = z.object({
   shoppingListId: z.string().min(1)
 });
 
-router.post(
-  "/delete",
-  auth(["owner"]),
-  validate(deleteShoppingListDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn;
-    const shoppingList = ensureShoppingListExists(res, dtoIn.shoppingListId);
-    if (!shoppingList) return;
-    if (!ensureMembership(dtoIn.shoppingListId, req.userId, ["owner"], res)) return;
-    deleteShoppingList(dtoIn.shoppingListId);
-    return res.json({
-      shoppingListId: dtoIn.shoppingListId,
-      uuAppErrorMap: {}
-    });
+const handleDelete = [
+  auth,
+  normalizeDtoFromQuery,
+  validateDtoIn(deleteShoppingListDtoIn, "shoppingList/delete"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn;
+      const shoppingList = await ensureShoppingListExists(
+        dtoIn.shoppingListId,
+        res,
+        uuAppErrorMap,
+        "shoppingList/delete"
+      );
+      if (!shoppingList) return;
+      if (
+        !(await ensureMembership(
+          dtoIn.shoppingListId,
+          req.user.id,
+          ["owner"],
+          res,
+          uuAppErrorMap,
+          "shoppingList/delete"
+        ))
+      )
+        return;
+      const removed = await deleteShoppingList(dtoIn.shoppingListId);
+      if (!removed) {
+        addError(
+          uuAppErrorMap,
+          "shoppingList/delete/notDeleted",
+          "Shopping list could not be deleted.",
+          "error",
+          { shoppingListId: dtoIn.shoppingListId }
+        );
+        return res.status(400).json({ uuAppErrorMap });
+      }
+      return res.json({ shoppingListId: dtoIn.shoppingListId, uuAppErrorMap });
+    } catch (error) {
+      console.error("shoppingList/delete failed:", error);
+      addError(
+        uuAppErrorMap,
+        "shoppingList/delete/systemError",
+        "Unexpected server error.",
+        "error"
+      );
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/delete", ...handleDelete);
+router.delete("/delete", ...handleDelete);
 
 /**
  * 6) shoppingList/addMember
@@ -207,34 +336,61 @@ const addMemberDtoIn = z.object({
   role: z.enum(["member", "owner"]).optional()
 });
 
-router.post(
-  "/addMember",
-  auth(["owner"]),
-  validate(addMemberDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn;
-    const shoppingList = ensureShoppingListExists(res, dtoIn.shoppingListId);
-    if (!shoppingList) return;
-    if (!ensureMembership(dtoIn.shoppingListId, req.userId, ["owner"], res)) return;
-    const { membership, alreadyExisted } = addMembership({
-      shoppingListId: dtoIn.shoppingListId,
-      memberId: dtoIn.memberId,
-      role: dtoIn.role || "member"
-    });
-    return res.json({
-      membership,
-      uuAppErrorMap: alreadyExisted
-        ? {
-            "membership/alreadyExists": {
-              type: "warning",
-              message: "Member already exists, returning existing membership.",
-              paramMap: { memberId: dtoIn.memberId }
-            }
-          }
-        : {}
-    });
+const handleAddMember = [
+  auth,
+  validateDtoIn(addMemberDtoIn, "shoppingList/addMember"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn;
+      const shoppingList = await ensureShoppingListExists(
+        dtoIn.shoppingListId,
+        res,
+        uuAppErrorMap,
+        "shoppingList/addMember"
+      );
+      if (!shoppingList) return;
+      if (
+        !(await ensureMembership(
+          dtoIn.shoppingListId,
+          req.user.id,
+          ["owner"],
+          res,
+          uuAppErrorMap,
+          "shoppingList/addMember"
+        ))
+      )
+        return;
+      const { membership, alreadyExisted } = await addMembership({
+        shoppingListId: dtoIn.shoppingListId,
+        memberId: dtoIn.memberId,
+        role: dtoIn.role || "member",
+        createdBy: req.user.id
+      });
+      if (alreadyExisted) {
+        addError(
+          uuAppErrorMap,
+          "shoppingList/addMember/alreadyExists",
+          "Member already exists, returning existing membership.",
+          "warning",
+          { memberId: dtoIn.memberId }
+        );
+      }
+      return res.json({ membership, uuAppErrorMap });
+    } catch (error) {
+      console.error("shoppingList/addMember failed:", error);
+      addError(
+        uuAppErrorMap,
+        "shoppingList/addMember/systemError",
+        "Unexpected server error.",
+        "error"
+      );
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/addMember", ...handleAddMember);
 
 /**
  * 7) shoppingList/removeMember
@@ -244,30 +400,58 @@ const removeMemberDtoIn = z.object({
   memberId: z.string().min(1)
 });
 
-router.post(
-  "/removeMember",
-  auth(["owner"]),
-  validate(removeMemberDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn;
-    const shoppingList = ensureShoppingListExists(res, dtoIn.shoppingListId);
-    if (!shoppingList) return;
-    if (!ensureMembership(dtoIn.shoppingListId, req.userId, ["owner"], res)) return;
-    const removed = removeMembership(dtoIn.shoppingListId, dtoIn.memberId);
-    return res.json({
-      removed,
-      uuAppErrorMap: removed
-        ? {}
-        : {
-            "membership/notFound": {
-              type: "warning",
-              message: "Member not found on this shopping list.",
-              paramMap: { memberId: dtoIn.memberId }
-            }
-          }
-    });
+const handleRemoveMember = [
+  auth,
+  normalizeDtoFromQuery,
+  validateDtoIn(removeMemberDtoIn, "shoppingList/removeMember"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn;
+      const shoppingList = await ensureShoppingListExists(
+        dtoIn.shoppingListId,
+        res,
+        uuAppErrorMap,
+        "shoppingList/removeMember"
+      );
+      if (!shoppingList) return;
+      if (
+        !(await ensureMembership(
+          dtoIn.shoppingListId,
+          req.user.id,
+          ["owner"],
+          res,
+          uuAppErrorMap,
+          "shoppingList/removeMember"
+        ))
+      )
+        return;
+      const removed = await removeMembership(dtoIn.shoppingListId, dtoIn.memberId);
+      if (!removed) {
+        addError(
+          uuAppErrorMap,
+          "shoppingList/removeMember/notFound",
+          "Member not found on this shopping list.",
+          "warning",
+          { memberId: dtoIn.memberId }
+        );
+      }
+      return res.json({ removed, uuAppErrorMap });
+    } catch (error) {
+      console.error("shoppingList/removeMember failed:", error);
+      addError(
+        uuAppErrorMap,
+        "shoppingList/removeMember/systemError",
+        "Unexpected server error.",
+        "error"
+      );
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/removeMember", ...handleRemoveMember);
+router.delete("/removeMember", ...handleRemoveMember);
 
 /**
  * 8) shoppingList/listMembers
@@ -276,21 +460,48 @@ const listMembersDtoIn = z.object({
   shoppingListId: z.string().min(1)
 });
 
-router.post(
-  "/listMembers",
-  auth(["owner", "member"]),
-  validate(listMembersDtoIn),
-  (req, res) => {
-    const dtoIn = req.dtoIn;
-    const shoppingList = ensureShoppingListExists(res, dtoIn.shoppingListId);
-    if (!shoppingList) return;
-    if (!ensureMembership(dtoIn.shoppingListId, req.userId, ["owner", "member"], res)) return;
-    const members = listMembers(dtoIn.shoppingListId);
-    return res.json({
-      members,
-      uuAppErrorMap: {}
-    });
+const handleListMembers = [
+  auth,
+  normalizeDtoFromQuery,
+  validateDtoIn(listMembersDtoIn, "shoppingList/listMembers"),
+  async (req, res) => {
+    const uuAppErrorMap = { ...(req.uuAppErrorMap || {}) };
+    try {
+      const dtoIn = req.dtoIn;
+      const shoppingList = await ensureShoppingListExists(
+        dtoIn.shoppingListId,
+        res,
+        uuAppErrorMap,
+        "shoppingList/listMembers"
+      );
+      if (!shoppingList) return;
+      if (
+        !(await ensureMembership(
+          dtoIn.shoppingListId,
+          req.user.id,
+          ["owner", "member"],
+          res,
+          uuAppErrorMap,
+          "shoppingList/listMembers"
+        ))
+      )
+        return;
+      const members = await listMembers(dtoIn.shoppingListId);
+      return res.json({ members, uuAppErrorMap });
+    } catch (error) {
+      console.error("shoppingList/listMembers failed:", error);
+      addError(
+        uuAppErrorMap,
+        "shoppingList/listMembers/systemError",
+        "Unexpected server error.",
+        "error"
+      );
+      return res.status(500).json({ uuAppErrorMap });
+    }
   }
-);
+];
+
+router.post("/listMembers", ...handleListMembers);
+router.get("/listMembers", ...handleListMembers);
 
 module.exports = router;
