@@ -37,6 +37,11 @@ Node.js/Express REST API with uuCmd-style endpoints for shopping lists and items
 
 Insomnia collection is provided in `insomnia_collection.json` (import into Insomnia).
 
+## Running tests
+- Install deps (if you haven’t): `npm install`
+- Run the Jest suite (uses Supertest and mocked data store, no real DB needed): `npm test`
+- Tip: set `NODE_ENV=test` implicitly via the script; the server won’t auto-start when imported in tests.
+
 ## Calling the API
 - Base path `/`; required header: `x-user-id: <your-user>`.
 - Responses always include `uuAppErrorMap` (warnings/errors).
@@ -58,4 +63,3 @@ Insomnia collection is provided in `insomnia_collection.json` (import into Insom
 - `POST` or `PATCH /item/update` — `{ itemId, name?, quantity?, note? }` (owner|member)
 - `POST` or `PATCH /item/markDone` — `{ itemId, done }` (owner|member; respects `canMarkItemsDoneByAll`)
 - `POST` or `DELETE /item/delete` — `{ itemId }` (owner|member)
-
