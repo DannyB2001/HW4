@@ -46,6 +46,9 @@ const start = async () => {
   }
 };
 
-start();
+// Skip automatic startup when running tests so the app can be imported without a live DB connection.
+if (process.env.NODE_ENV !== "test") {
+  start();
+}
 
 module.exports = app;
